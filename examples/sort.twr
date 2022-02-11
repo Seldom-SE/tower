@@ -12,11 +12,11 @@
         #a
         ?!<cb[
             #a
-            TODO
+            TODO Push the pop from c to a, leaving b untouched
             a[a]
         ?:0]
         #a
-    ?TODO]
+    ?TODO Jump if the previous if statement ran]
     c[bc]
 ?a]
 ?:0[
