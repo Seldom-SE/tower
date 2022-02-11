@@ -1,8 +1,9 @@
 // T
 // o
-// w by Seldom, 2022
+// w
 // e
 // r
+// by Seldom, 2022
 
 use std::{
     env::args,
