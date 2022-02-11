@@ -1,8 +1,16 @@
+// T
+// o
+// w
+// e
+// r
+// by Seldom, 2022
+
 use std::{
     env::args,
     error::Error,
     fmt::{self, Display, Formatter},
     fs::read_to_string,
+    io::{stdin, stdout, Write},
     process::exit,
 };
 
@@ -61,6 +69,10 @@ enum Register {
 }
 
 impl Register {
+    fn list() -> &'static [Self] {
+        &[Self::A, Self::B, Self::C]
+    }
+
     fn character(&self) -> char {
         match self {
             Self::A => 'a',
@@ -120,18 +132,18 @@ impl Token {
             let mut continue_lexing = true;
 
             if let LexContext::NumLiteral { num, line } = ctx {
-                if c.is_whitespace() || c == '-' || c.is_ascii_digit() {
+                if c.is_whitespace() || c.is_ascii_digit() || (c == '-' && num.trim().is_empty()) {
                     ctx = LexContext::NumLiteral {
-                        num: if c.is_ascii_digit() {
-                            num + &c.to_string()
-                        } else {
+                        num: if c.is_whitespace() {
                             num
+                        } else {
+                            num + &c.to_string()
                         },
                         line,
                     };
                     continue_lexing = false;
                 } else {
-                    tokens.push(Token {
+                    tokens.push(Self {
                         token_type: TokenType::NumLiteral(
                             num.chars()
                                 .into_iter()
@@ -189,7 +201,7 @@ impl Token {
                             '#' => Some(TokenType::Extract),
                             c => return Err(Box::new(LexError::InvalidChar { line, c })),
                         } {
-                            tokens.push(Token { token_type, line });
+                            tokens.push(Self { token_type, line });
                         }
                     }
                     LexContext::CharLiteral { escaped, line } => {
@@ -199,7 +211,7 @@ impl Token {
                         }
 
                         if escaped {
-                            tokens.push(Token {
+                            tokens.push(Self {
                                 token_type: TokenType::CharLiteral(match c {
                                     's' => ' ',
                                     'n' => '\n',
@@ -222,7 +234,7 @@ impl Token {
                                     };
                                 }
                                 c => {
-                                    tokens.push(Token {
+                                    tokens.push(Self {
                                         token_type: TokenType::CharLiteral(c),
                                         line,
                                     });
@@ -239,7 +251,7 @@ impl Token {
         match ctx {
             LexContext::Main => {}
             LexContext::NumLiteral { num, line } => {
-                tokens.push(Token {
+                tokens.push(Self {
                     token_type: TokenType::NumLiteral(
                         num.chars()
                             .into_iter()
@@ -250,7 +262,7 @@ impl Token {
                     line,
                 });
             }
-            LexContext::CharLiteral { escaped, line } => return Err(Box::new(LexError::CharEof)),
+            LexContext::CharLiteral { .. } => return Err(Box::new(LexError::CharEof)),
         }
 
         Ok(tokens)
@@ -289,7 +301,7 @@ enum ParseError {
     MissingJumpForward { line: u32 },
     MissingJumpBack { line: u32 },
     UnclosedCompression { line: u32 },
-    ExpressionEof { line: u32 },
+    ExpressionEof,
     DuplicateRegister { register: Register, line: u32 },
     InvalidRegister(Token),
 }
@@ -316,8 +328,7 @@ impl Display for ParseError {
                     format!("missing ']' jump to match '[' jump on line {}", line),
                 Self::UnclosedCompression { line } =>
                     format!("unclosed compression expression on line {}", line),
-                Self::ExpressionEof { line } =>
-                    format!("expected expression at EOF on line {}", line),
+                Self::ExpressionEof => "expected expression at EOF".to_string(),
                 Self::DuplicateRegister { register, line } => format!(
                     "duplicate register on line {}: '{}'",
                     line,
@@ -335,18 +346,17 @@ impl Display for ParseError {
 
 impl Error for ParseError {}
 
-#[derive(Debug, Default)]
-struct RegisterSet {
-    a: bool,
-    b: bool,
-    c: bool,
+#[derive(Clone, Debug, Default)]
+struct RegisterSet<T> {
+    a: T,
+    b: T,
+    c: T,
 }
 
-impl RegisterSet {
+impl RegisterSet<bool> {
     fn parse(tokens: &[Token], mut index: usize) -> Result<(Self, usize), ParseError> {
         let mut registers = Self::default();
         let line = tokens[index].line;
-        index += 1;
 
         loop {
             let token = tokens
@@ -372,8 +382,27 @@ impl RegisterSet {
 
         Ok((registers, index + 1))
     }
+}
 
-    fn get(&self, register: Register) -> &bool {
+impl RegisterSet<bool> {
+    fn iter(&self) -> impl Iterator<Item = Register> + '_ {
+        Register::list()
+            .iter()
+            .filter(|register| *self.get(**register))
+            .copied()
+    }
+}
+
+impl<T> RegisterSet<Option<T>> {
+    fn iter(&self) -> impl Iterator<Item = (Register, &T)> {
+        Register::list()
+            .iter()
+            .filter_map(|register| self.get(*register).as_ref().map(|value| (*register, value)))
+    }
+}
+
+impl<T> RegisterSet<T> {
+    fn get(&self, register: Register) -> &T {
         match register {
             Register::A => &self.a,
             Register::B => &self.b,
@@ -381,7 +410,7 @@ impl RegisterSet {
         }
     }
 
-    fn get_mut(&mut self, register: Register) -> &mut bool {
+    fn get_mut(&mut self, register: Register) -> &mut T {
         match register {
             Register::A => &mut self.a,
             Register::B => &mut self.b,
@@ -391,42 +420,30 @@ impl RegisterSet {
 }
 
 #[derive(Debug)]
-enum ExpressionType {
+enum Expression {
     NumLiteral(i32),
     CharLiteral(char),
     ReadNum,
     ReadChar,
     Get(Register),
-    Add(Box<Expression>, Box<Expression>),
-    Sub(Box<Expression>, Box<Expression>),
-    Mul(Box<Expression>, Box<Expression>),
-    Div(Box<Expression>, Box<Expression>),
-    Mod(Box<Expression>, Box<Expression>),
-    Not(Box<Expression>),
-    Equal(Box<Expression>, Box<Expression>),
-    Greater(Box<Expression>, Box<Expression>),
-    Less(Box<Expression>, Box<Expression>),
-    And(Box<Expression>, Box<Expression>),
-    Or(Box<Expression>, Box<Expression>),
-    Condition(Box<Expression>, Box<Expression>, Box<Expression>),
-    Compress(RegisterSet),
-}
-
-#[derive(Debug)]
-struct Expression {
-    expression_type: ExpressionType,
-    line: u32,
+    Add(Box<Self>, Box<Self>),
+    Sub(Box<Self>, Box<Self>),
+    Mul(Box<Self>, Box<Self>),
+    Div(Box<Self>, Box<Self>),
+    Mod(Box<Self>, Box<Self>),
+    Not(Box<Self>),
+    Equal(Box<Self>, Box<Self>),
+    Greater(Box<Self>, Box<Self>),
+    Less(Box<Self>, Box<Self>),
+    And(Box<Self>, Box<Self>),
+    Or(Box<Self>, Box<Self>),
+    Condition(Box<Self>, Box<Self>, Box<Self>),
+    Compress(RegisterSet<bool>),
 }
 
 impl Expression {
-    fn parse(
-        tokens: &[Token],
-        index: usize,
-        parent_line: u32,
-    ) -> Result<(Self, usize), ParseError> {
-        let token = tokens
-            .get(index)
-            .ok_or(ParseError::ExpressionEof { line: parent_line })?;
+    fn parse(tokens: &[Token], index: usize) -> Result<(Self, usize), ParseError> {
+        let token = tokens.get(index).ok_or(ParseError::ExpressionEof)?;
         let index = index + 1;
 
         match token.token_type {
@@ -435,16 +452,13 @@ impl Expression {
             | TokenType::NumIo
             | TokenType::CharIo
             | TokenType::Register(_) => Ok((
-                Self {
-                    expression_type: match token.token_type {
-                        TokenType::NumLiteral(num) => ExpressionType::NumLiteral(num),
-                        TokenType::CharLiteral(c) => ExpressionType::CharLiteral(c),
-                        TokenType::NumIo => ExpressionType::ReadNum,
-                        TokenType::CharIo => ExpressionType::ReadChar,
-                        TokenType::Register(register) => ExpressionType::Get(register),
-                        _ => unreachable!(),
-                    },
-                    line: token.line,
+                match token.token_type {
+                    TokenType::NumLiteral(num) => Self::NumLiteral(num),
+                    TokenType::CharLiteral(c) => Self::CharLiteral(c),
+                    TokenType::NumIo => Self::ReadNum,
+                    TokenType::CharIo => Self::ReadChar,
+                    TokenType::Register(register) => Self::Get(register),
+                    _ => unreachable!(),
                 },
                 index,
             )),
@@ -458,93 +472,176 @@ impl Expression {
             | TokenType::Less
             | TokenType::And
             | TokenType::Or => {
-                let (left, index) = Self::parse(tokens, index, token.line)?;
-                let (right, index) = Self::parse(tokens, index, token.line)?;
+                let (left, index) = Self::parse(tokens, index)?;
+                let (right, index) = Self::parse(tokens, index)?;
 
                 let left = Box::new(left);
                 let right = Box::new(right);
 
                 Ok((
-                    Self {
-                        expression_type: match token.token_type {
-                            TokenType::Add => ExpressionType::Add(left, right),
-                            TokenType::Sub => ExpressionType::Sub(left, right),
-                            TokenType::Mul => ExpressionType::Mul(left, right),
-                            TokenType::Div => ExpressionType::Div(left, right),
-                            TokenType::Mod => ExpressionType::Mod(left, right),
-                            TokenType::Equal => ExpressionType::Equal(left, right),
-                            TokenType::Greater => ExpressionType::Greater(left, right),
-                            TokenType::Less => ExpressionType::Less(left, right),
-                            TokenType::And => ExpressionType::And(left, right),
-                            TokenType::Or => ExpressionType::Or(left, right),
-                            _ => unreachable!(),
-                        },
-                        line: token.line,
+                    match token.token_type {
+                        TokenType::Add => Self::Add(left, right),
+                        TokenType::Sub => Self::Sub(left, right),
+                        TokenType::Mul => Self::Mul(left, right),
+                        TokenType::Div => Self::Div(left, right),
+                        TokenType::Mod => Self::Mod(left, right),
+                        TokenType::Equal => Self::Equal(left, right),
+                        TokenType::Greater => Self::Greater(left, right),
+                        TokenType::Less => Self::Less(left, right),
+                        TokenType::And => Self::And(left, right),
+                        TokenType::Or => Self::Or(left, right),
+                        _ => unreachable!(),
                     },
                     index,
                 ))
             }
             TokenType::Not => {
-                let (expression, index) = Self::parse(tokens, index, token.line)?;
+                let (expression, index) = Self::parse(tokens, index)?;
 
-                Ok((
-                    Self {
-                        expression_type: ExpressionType::Not(Box::new(expression)),
-                        line: token.line,
-                    },
-                    index,
-                ))
+                Ok((Self::Not(Box::new(expression)), index))
             }
             TokenType::Condition => {
-                let (condition, index) = Self::parse(tokens, index, token.line)?;
-                let (true_expression, index) = Self::parse(tokens, index, token.line)?;
-                let (false_expression, index) = Self::parse(tokens, index, token.line)?;
+                let (condition, index) = Self::parse(tokens, index)?;
+                let (true_expression, index) = Self::parse(tokens, index)?;
+                let (false_expression, index) = Self::parse(tokens, index)?;
 
                 Ok((
-                    Self {
-                        expression_type: ExpressionType::Condition(
-                            Box::new(condition),
-                            Box::new(true_expression),
-                            Box::new(false_expression),
-                        ),
-                        line: token.line,
-                    },
+                    Self::Condition(
+                        Box::new(condition),
+                        Box::new(true_expression),
+                        Box::new(false_expression),
+                    ),
                     index,
                 ))
             }
             TokenType::LeftBracket => {
                 let (registers, index) = RegisterSet::parse(tokens, index)?;
 
-                Ok((
-                    Self {
-                        expression_type: ExpressionType::Compress(registers),
-                        line: token.line,
-                    },
-                    index,
-                ))
+                Ok((Self::Compress(registers), index))
             }
             TokenType::RightBracket | TokenType::Extract => {
                 Err(ParseError::InvalidExpression(token.clone()))
             }
         }
     }
+
+    fn evaluate(&self, ctx: &mut Context) -> Value {
+        match self {
+            Self::NumLiteral(num) => Value::Num(*num),
+            Self::CharLiteral(c) => Value::Num(*c as i32),
+            Self::ReadNum => {
+                let (num, buffer) = loop {
+                    let mut num = None;
+                    let mut buffer = None;
+
+                    for c in ctx.buffer.chars() {
+                        if let Some(num) = num.as_mut() {
+                            if let Some(buffer) = buffer.as_mut() {
+                                *buffer = format!("{buffer}{c}");
+                            } else if c.is_ascii_digit() {
+                                *num = format!("{num}{c}");
+                            } else {
+                                buffer = Some(c.to_string());
+                            }
+                        } else if c.is_ascii_digit() || c == '-' {
+                            num = Some(c.to_string());
+                        }
+                    }
+
+                    if let Some(num) = num {
+                        break (
+                            num.parse::<i32>().unwrap(),
+                            buffer.unwrap_or_else(|| "".to_string()),
+                        );
+                    }
+
+                    ctx.read();
+                };
+
+                ctx.buffer = buffer;
+                Value::Num(num)
+            }
+            Self::ReadChar => {
+                let buffer_str = ctx.buffer.clone();
+                let mut chars = buffer_str.chars();
+                let num = Value::Num(chars.next().unwrap_or_else(|| {
+                    ctx.read();
+                    chars = ctx.buffer.chars();
+                    chars.next().unwrap()
+                }) as i32);
+                ctx.buffer = chars.as_str().to_string();
+                num
+            }
+            Self::Get(register) => ctx.registers.get(*register).clone(),
+            Self::Add(left, right)
+            | Self::Sub(left, right)
+            | Self::Mul(left, right)
+            | Self::Div(left, right)
+            | Self::Mod(left, right)
+            | Self::Greater(left, right)
+            | Self::Less(left, right) => Value::Num(if let Value::Num(left) = left.evaluate(ctx) {
+                if let Value::Num(right) = right.evaluate(ctx) {
+                    match self {
+                        Self::Add(..) => left + right,
+                        Self::Sub(..) => left - right,
+                        Self::Mul(..) => left * right,
+                        Self::Div(..) => left / right,
+                        Self::Mod(..) => left % right,
+                        Self::Greater(..) => (left > right) as i32,
+                        Self::Less(..) => (left < right) as i32,
+                        _ => unreachable!(),
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            }),
+            Self::Not(expression) => Value::Num((!expression.evaluate(ctx).truthy()) as i32),
+            Self::Equal(left, right) => {
+                Value::Num(match (left.evaluate(ctx), right.evaluate(ctx)) {
+                    (Value::Num(left), Value::Num(right)) => (left == right) as i32,
+                    (Value::Num(_), Value::Archive(_)) | (Value::Archive(_), Value::Num(_)) => 0,
+                    (Value::Archive(_), Value::Archive(_)) => 1,
+                })
+            }
+            Self::And(left, right) => Value::Num(if left.evaluate(ctx).truthy() {
+                right.evaluate(ctx).truthy() as i32
+            } else {
+                0
+            }),
+            Self::Or(left, right) => Value::Num(if left.evaluate(ctx).truthy() {
+                1
+            } else {
+                right.evaluate(ctx).truthy() as i32
+            }),
+            Self::Condition(condition, true_expression, false_expression) => {
+                if condition.evaluate(ctx).truthy() {
+                    true_expression.evaluate(ctx)
+                } else {
+                    false_expression.evaluate(ctx)
+                }
+            }
+            Self::Compress(registers) => {
+                let mut archive = RegisterSet::default();
+                for register in registers.iter() {
+                    *archive.get_mut(register) = Some(ctx.registers.get(register).clone());
+                }
+                Value::Archive(Box::new(archive))
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
-enum StatementType {
+enum Statement {
     PrintNum(Expression),
     PrintChar(Expression),
     Set(Register, Expression),
-    If(Expression, Box<Statement>),
-    JumpForward { statements: Vec<Statement> },
+    If(Expression, Box<Self>),
+    JumpForward { statements: Vec<Self> },
     JumpBack,
     Extract(Expression),
-}
-
-#[derive(Debug)]
-struct Statement {
-    statement_type: StatementType,
-    line: u32,
 }
 
 impl Statement {
@@ -573,33 +670,22 @@ impl Statement {
             | TokenType::And
             | TokenType::Or => Err(ParseError::InvalidStatement(token.clone())),
             TokenType::NumIo | TokenType::CharIo | TokenType::Register(_) | TokenType::Extract => {
-                let (expression, index) = Expression::parse(tokens, index, token.line)?;
+                let (expression, index) = Expression::parse(tokens, index)?;
                 Ok((
-                    Self {
-                        statement_type: match token.token_type {
-                            TokenType::NumIo => StatementType::PrintNum(expression),
-                            TokenType::CharIo => StatementType::PrintChar(expression),
-                            TokenType::Register(register) => {
-                                StatementType::Set(register, expression)
-                            }
-                            TokenType::Extract => StatementType::Extract(expression),
-                            _ => unreachable!(),
-                        },
-                        line: token.line,
+                    match token.token_type {
+                        TokenType::NumIo => Self::PrintNum(expression),
+                        TokenType::CharIo => Self::PrintChar(expression),
+                        TokenType::Register(register) => Self::Set(register, expression),
+                        TokenType::Extract => Self::Extract(expression),
+                        _ => unreachable!(),
                     },
                     index,
                 ))
             }
             TokenType::Condition => {
-                let (expression, index) = Expression::parse(tokens, index, token.line)?;
+                let (expression, index) = Expression::parse(tokens, index)?;
                 let (statement, index) = Self::parse(tokens, index, token.line)?;
-                Ok((
-                    Self {
-                        statement_type: StatementType::If(expression, Box::new(statement)),
-                        line: token.line,
-                    },
-                    index,
-                ))
+                Ok((Self::If(expression, Box::new(statement)), index))
             }
             TokenType::LeftBracket => {
                 let mut statements = Vec::default();
@@ -618,43 +704,25 @@ impl Statement {
                     index = new_index;
                     statements.push(statement);
                 }
-                Ok((
-                    Self {
-                        statement_type: StatementType::JumpForward { statements },
-                        line: token.line,
-                    },
-                    index,
-                ))
+                Ok((Self::JumpForward { statements }, index))
             }
-            TokenType::RightBracket => Ok((
-                Self {
-                    statement_type: StatementType::JumpBack,
-                    line: token.line,
-                },
-                index,
-            )),
+            TokenType::RightBracket => Ok((Self::JumpBack, index)),
         }
     }
 
-    fn parse_program(tokens: Vec<Token>) -> Result<Vec<Self>, ParseError> {
-        println!("{tokens:?}");
-
+    fn parse_list(tokens: Vec<Token>) -> Result<Vec<Self>, ParseError> {
         let mut statements = Vec::<Self>::default();
         let mut index = 0;
         let mut expecting_jump_back = false;
 
         while index < tokens.len() {
-            let (statement, new_index) = Self::parse(
-                &tokens,
-                index,
-                statements.last().map_or(1, |statement| statement.line),
-            )?;
-            println!("{statement:?}");
+            let (statement, new_index) = Self::parse(&tokens, index, tokens[index].line)?;
+
             if statement.jumps_forward() {
                 expecting_jump_back = true;
             } else if statement.jumps_back() && !expecting_jump_back {
                 return Err(ParseError::MissingJumpForward {
-                    line: statement.line,
+                    line: tokens[index].line,
                 });
             } else {
                 expecting_jump_back = false;
@@ -662,31 +730,132 @@ impl Statement {
             index = new_index;
             statements.push(statement);
         }
+
         Ok(statements)
     }
 
     fn jumps_forward(&self) -> bool {
-        match &self.statement_type {
-            StatementType::PrintNum(_)
-            | StatementType::PrintChar(_)
-            | StatementType::Set(_, _)
-            | StatementType::Extract(_)
-            | StatementType::JumpBack => false,
-            StatementType::If(_, statement) => statement.jumps_forward(),
-            StatementType::JumpForward { .. } => true,
+        match self {
+            Self::PrintNum(_)
+            | Self::PrintChar(_)
+            | Self::Set(_, _)
+            | Self::Extract(_)
+            | Self::JumpBack => false,
+            Self::If(_, statement) => statement.jumps_forward(),
+            Self::JumpForward { .. } => true,
         }
     }
 
     fn jumps_back(&self) -> bool {
-        match &self.statement_type {
-            StatementType::PrintNum(_)
-            | StatementType::PrintChar(_)
-            | StatementType::Set(_, _)
-            | StatementType::Extract(_)
-            | StatementType::JumpForward { .. } => false,
-            StatementType::If(_, statement) => statement.jumps_back(),
-            StatementType::JumpBack => true,
+        match self {
+            Self::PrintNum(_)
+            | Self::PrintChar(_)
+            | Self::Set(_, _)
+            | Self::Extract(_)
+            | Self::JumpForward { .. } => false,
+            Self::If(_, statement) => statement.jumps_back(),
+            Self::JumpBack => true,
         }
+    }
+
+    fn run(&self, ctx: &mut Context, bypass_if: bool) -> isize {
+        match self {
+            Self::PrintNum(expression) => {
+                print!("{}", expression.evaluate(ctx).as_num());
+                stdout().flush().unwrap();
+                1
+            }
+            Self::PrintChar(expression) => {
+                print!("{}", expression.evaluate(ctx).as_char());
+                stdout().flush().unwrap();
+                1
+            }
+            Self::Set(register, expression) => {
+                *ctx.registers.get_mut(*register) = expression.evaluate(ctx);
+                1
+            }
+            Self::If(expression, statement) => {
+                if !bypass_if && expression.evaluate(ctx).truthy() {
+                    statement.run(ctx, bypass_if)
+                } else {
+                    if let Self::JumpForward { statements } = &**statement {
+                        ctx.run(statements);
+                    }
+                    1
+                }
+            }
+            Self::JumpForward { .. } => 2,
+            Self::JumpBack => -1,
+            Self::Extract(expression) => {
+                if let Value::Archive(archive) = expression.evaluate(ctx) {
+                    for (register, value) in archive.iter() {
+                        *ctx.registers.get_mut(register) = value.clone();
+                    }
+                }
+                1
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+enum Value {
+    Num(i32),
+    Archive(Box<RegisterSet<Option<Self>>>),
+}
+
+impl Default for Value {
+    fn default() -> Self {
+        Self::Num(0)
+    }
+}
+
+impl Value {
+    fn truthy(&self) -> bool {
+        match self {
+            Self::Num(num) => *num != 0,
+            Self::Archive(_) => true,
+        }
+    }
+
+    fn as_num(&self) -> String {
+        match self {
+            Self::Num(num) => num.to_string(),
+            Self::Archive(_) => "".to_string(),
+        }
+    }
+
+    fn as_char(&self) -> String {
+        match self {
+            Self::Num(num) => match char::from_u32(*num as u32) {
+                Some(c) => c.to_string(),
+                None => "�".to_string(),
+            },
+            Self::Archive(_) => "".to_string(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct Context {
+    registers: RegisterSet<Value>,
+    buffer: String,
+}
+
+impl Context {
+    fn run(&mut self, statements: &[Statement]) {
+        let mut index = 0;
+        let mut bypass_if = false;
+
+        while let Some(statement) = statements.get(index) {
+            let offset = statement.run(self, bypass_if);
+            bypass_if = offset < 0;
+            index = (index as isize + offset) as usize;
+        }
+    }
+
+    fn read(&mut self) {
+        stdin().read_line(&mut self.buffer).unwrap();
     }
 }
 
@@ -703,11 +872,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     if cmd_args.len() != 2 {
         Err(Box::new(CommandError::WrongNumOfArgs))
     } else if let Some(path) = cmd_args.last() {
-        Statement::parse_program(Token::lex(read_to_string(path)?)?)?
-            .into_iter()
-            .for_each(|statement| {
-                println!("{statement:?}");
-            });
+        Context::default().run(&Statement::parse_list(Token::lex(read_to_string(path)?)?)?);
         Ok(())
     } else {
         unreachable!()
