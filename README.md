@@ -50,7 +50,7 @@ Archives have up to three registers of their own, each of which may contain a nu
 | `% <Expr> <Expr>` | Modulo two numbers | `.%:12:5` | Prints `2` |
 | `! <Expr>` | Logical NOT. Evaluates to `1` for any falsey value, and `0` for any truthy value. | `.!:-1` | Prints `0` |
 | `& <Expr> <Expr>` | Logical AND | `.&:1a` | Prints `1` if register `a` is truthy, and `0` otherwise |
-| `| <Expr> <Expr>` | Logical OR | `.|:0a` | Prints `1` if register `a` is truthy, and `0` otherwise |
+| <code>&#124; &lt;Expr&gt;</code> | Logical OR | <code>.&#124;:0a</code> | Prints `1` if register `a` is truthy, and `0` otherwise |
 | `= <Expr> <Expr>` | Checks whether the expressions equal. Any archive is considered equal to any other archive. | `.=:-1-:3:2` | Prints `1` |
 | `< <Expr> <Expr>` | Checks whether the first expression is less than the second | `.<:3:5` | Prints `1` |
 | `> <Expr> <Expr>` | Checks whether the first expression is greater than the second | `.>:3:5` | Prints `0` |
