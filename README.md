@@ -1,9 +1,9 @@
 ## License
 
-T
-o
-w is dual-licensed under either
-e
+T\
+o\
+w is dual-licensed under either\
+e\
 r
 
 * MIT License (LICENSE-MIT or http://opensource.org/licenses/MIT)
