@@ -24,14 +24,16 @@ Archives have up to three registers of their own, each of which may contain a nu
 
 ### Statements
 
+Any character tries to be a statement by default. A symbol only becomes an expression if a previous statement or expression coerces it into one. Later characters have coercion priority over earlier ones. For example (you may want to reference the tables below for this example), in `?&bc#a[`, `?` coerces `&` into an expression, which coerces `b` and `c` into expressions. `#` is the next available character, so `?` coerces it into a statement, and `#` coerces `a` into an expression. `?&bc#a` is a complete statement, so `[` becomes a statement by default.
+
 | Statement | Description | Example | Example notes |
 | --- | --- | --- | --- |
 | `. <Expr>` | Print the expression as a number | `.:1` | Prints `1` |
 | `, <Expr>` | Print the expression as a character | `,;A` | Prints `A` |
 | `a <Expr>`, `b <Expr>`, `c <Expr>` | Store the expression in register `a`, `b`, or `c` | `a:1` | Stores `1` in register `a` |
 | `? <Expr> <Stmt>` | Execute the statement if the expression is truthy | `?:0.:1` | Prints nothing |
-| `[` | Jump forward to the matching `]` | `?:1[.:1].:0` | Skips `1` and prints `0` |
-| `]` | Jump back to the matching `[` | `?:0[.:1].:0` | Prints `1` forever |
+| `[` | Jump forward, just after the matching `]` | `?:1[.:1].:0` | Skips `1` and prints `0` |
+| `]` | Jump back, just after the matching `[` | `?:0[.:1].:0` | Prints `1` forever |
 | `# <Expr>` | Extracts the expression, if it's an archive. Registers are overwritten with the registers stored in the archive. Registers that do not have a value in the archive are not overwritten. | `#a` | Extracts the archive `a` |
 
 ### Expressions
@@ -48,7 +50,7 @@ Archives have up to three registers of their own, each of which may contain a nu
 | `* <Expr> <Expr>` | Multiply two numbers | `.*:4:3` | Prints `12` |
 | `/ <Expr> <Expr>` | Divide two numbers | `./:12:5` | Prints `2` |
 | `% <Expr> <Expr>` | Modulo two numbers | `.%:12:5` | Prints `2` |
-| `! <Expr>` | Logical NOT. Evaluates to `1` for any falsey value, and `0` for any truthy value. | `.!:-1` | Prints `0` |
+| `! <Expr>` | Logical NOT. Evaluates to `1` for any falsey value, and `0` for any truthy value. All archives are truthy. | `.!:-1` | Prints `0` |
 | `& <Expr> <Expr>` | Logical AND | `.&:1a` | Prints `1` if register `a` is truthy, and `0` otherwise |
 | <code>&#124; &lt;Expr&gt;</code> | Logical OR | <code>.&#124;:0a</code> | Prints `1` if register `a` is truthy, and `0` otherwise |
 | `= <Expr> <Expr>` | Checks whether the expressions equal. Any archive is considered equal to any other archive. | `.=:-1-:3:2` | Prints `1` |
@@ -56,6 +58,8 @@ Archives have up to three registers of their own, each of which may contain a nu
 | `> <Expr> <Expr>` | Checks whether the first expression is greater than the second | `.>:3:5` | Prints `0` |
 | `? <Expr> <Expr> <Expr>` | Conditional. If the first expression is truthy, it resolves to the second expression. Otherwise, it resolves to the third expression. | `,?;A;B;C` | Prints `C` |
 | `[ <Registers> ]` | Creates an archive of the given registers | `c[ac]` | Creates an archive containing the current values of registers `a` and `c`, and stores it in register `c` |
+
+`+`, `-`, `*`, `/`, `%`, `>`, and `<` evaluate to `0` if either expression is an archive
 
 ## Examples
 
